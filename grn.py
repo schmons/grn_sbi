@@ -4,131 +4,78 @@ from scipy.integrate import solve_ivp
 
 class GeneRegulatoryNetwork:
     """
-    A simple gene regulatory network model with tunable parameters.
+    A simplified repressilator model based on the classic paper by Elowitz and Leibler.
     
-    Parameters:
-    -----------
-    n_genes : int
-        Number of genes in the network
-    interaction_matrix : numpy.ndarray or None
-        Matrix defining interactions between genes (activating/repressing)
-    hill_coefficients : numpy.ndarray or None
-        Hill coefficients for each interaction
-    activation_thresholds : numpy.ndarray or None
-        Activation thresholds for each interaction
-    basal_rates : numpy.ndarray or None
-        Basal expression rates for each gene
-    degradation_rates : numpy.ndarray or None
-        Degradation rates for each gene product
+    This model implements a 3-gene repressilator with parameters specifically tuned
+    to produce oscillations.
     """
     
-    def __init__(self, n_genes=3, interaction_matrix=None, hill_coefficients=None, 
-                 activation_thresholds=None, basal_rates=None, degradation_rates=None):
-        self.n_genes = n_genes
-        
-        # Initialize parameters with default values if not provided
-        if interaction_matrix is None:
-            # Default: gene 0 activates gene 1, gene 1 represses gene 2, gene 2 represses gene 0
-            self.interaction_matrix = np.array([
-                [0, 1, -0.5],
-                [0, 0, 1],
-                [-0.8, 0, 0]
-            ])
-        else:
-            self.interaction_matrix = interaction_matrix
-            
-        if hill_coefficients is None:
-            # Default Hill coefficients (cooperativity)
-            self.hill_coefficients = np.ones((n_genes, n_genes)) * 2
-        else:
-            self.hill_coefficients = hill_coefficients
-            
-        if activation_thresholds is None:
-            # Default activation thresholds
-            self.activation_thresholds = np.ones((n_genes, n_genes)) * 0.5
-        else:
-            self.activation_thresholds = activation_thresholds
-            
-        if basal_rates is None:
-            # Default basal expression rates
-            self.basal_rates = np.ones(n_genes) * 0.1
-        else:
-            self.basal_rates = basal_rates
-            
-        if degradation_rates is None:
-            # Default degradation rates
-            self.degradation_rates = np.ones(n_genes) * 0.2
-        else:
-            self.degradation_rates = degradation_rates
-    
-    def regulation_function(self, x, i, j):
+    def __init__(self, alpha=216, alpha0=0.216, beta=5, n=2, K=40):
         """
-        Compute the regulatory effect of gene j on gene i.
+        Initialize the repressilator model with parameters from literature.
         
         Parameters:
         -----------
-        x : numpy.ndarray
-            Current gene expression levels
-        i : int
-            Target gene index
-        j : int
-            Regulator gene index
-            
-        Returns:
-        --------
-        float
-            Regulatory effect
+        alpha : float
+            Maximum transcription rate in the absence of repressor
+        alpha0 : float
+            Leakiness of promoter (basal transcription rate)
+        beta : float
+            Ratio of protein decay rate to mRNA decay rate
+        n : float
+            Hill coefficient (cooperativity)
+        K : float
+            Repression coefficient
         """
-        if self.interaction_matrix[i, j] == 0:
-            return 0
-        
-        hill_coef = self.hill_coefficients[i, j]
-        threshold = self.activation_thresholds[i, j]
-        
-        if self.interaction_matrix[i, j] > 0:  # Activation
-            return self.interaction_matrix[i, j] * (x[j]**hill_coef) / (threshold**hill_coef + x[j]**hill_coef)
-        else:  # Repression
-            return self.interaction_matrix[i, j] * (threshold**hill_coef) / (threshold**hill_coef + x[j]**hill_coef)
+        self.alpha = alpha
+        self.alpha0 = alpha0
+        self.beta = beta
+        self.n = n
+        self.K = K
+        self.n_genes = 3  # Fixed for repressilator
     
-    def dynamics(self, t, x):
+    def dynamics(self, t, state):
         """
-        Define the system dynamics dx/dt.
+        Define the system dynamics.
         
         Parameters:
         -----------
         t : float
             Current time point
-        x : numpy.ndarray
-            Current gene expression levels
+        state : numpy.ndarray
+            Current state [m1, m2, m3, p1, p2, p3] where m is mRNA and p is protein
             
         Returns:
         --------
         numpy.ndarray
-            Rate of change for each gene
+            Rate of change for each state variable
         """
-        dx_dt = np.zeros(self.n_genes)
+        # Unpack state variables
+        m1, m2, m3, p1, p2, p3 = state
         
-        for i in range(self.n_genes):
-            # Basal expression
-            dx_dt[i] = self.basal_rates[i]
-            
-            # Add regulatory effects from all genes
-            for j in range(self.n_genes):
-                dx_dt[i] += self.regulation_function(x, i, j)
-            
-            # Degradation
-            dx_dt[i] -= self.degradation_rates[i] * x[i]
+        # Ensure non-negative values
+        m1, m2, m3 = max(0, m1), max(0, m2), max(0, m3)
+        p1, p2, p3 = max(0, p1), max(0, p2), max(0, p3)
         
-        return dx_dt
+        # Calculate derivatives
+        dm1_dt = -m1 + self.alpha/(1 + (p3/self.K)**self.n) + self.alpha0
+        dm2_dt = -m2 + self.alpha/(1 + (p1/self.K)**self.n) + self.alpha0
+        dm3_dt = -m3 + self.alpha/(1 + (p2/self.K)**self.n) + self.alpha0
+        
+        dp1_dt = -self.beta * (p1 - m1)
+        dp2_dt = -self.beta * (p2 - m2)
+        dp3_dt = -self.beta * (p3 - m3)
+        
+        return [dm1_dt, dm2_dt, dm3_dt, dp1_dt, dp2_dt, dp3_dt]
     
     def simulate(self, initial_conditions=None, t_span=(0, 100), t_points=1000):
         """
-        Simulate the gene regulatory network dynamics.
+        Simulate the repressilator dynamics.
         
         Parameters:
         -----------
         initial_conditions : numpy.ndarray or None
-            Initial gene expression levels
+            Initial state [m1, m2, m3, p1, p2, p3]
         t_span : tuple
             Time span for simulation (start, end)
         t_points : int
@@ -137,10 +84,11 @@ class GeneRegulatoryNetwork:
         Returns:
         --------
         tuple
-            (time_points, gene_expression_trajectories)
+            (time_points, state_trajectories)
         """
         if initial_conditions is None:
-            initial_conditions = np.random.rand(self.n_genes) * 0.1
+            # Asymmetric initial conditions to break symmetry
+            initial_conditions = np.array([0, 0, 0, 2, 1, 3])
         
         t_eval = np.linspace(t_span[0], t_span[1], t_points)
         
@@ -155,7 +103,7 @@ class GeneRegulatoryNetwork:
         
         return solution.t, solution.y
     
-    def plot_simulation(self, t, y, title="Gene Regulatory Network Dynamics"):
+    def plot_simulation(self, t, y, title="Repressilator Dynamics"):
         """
         Plot the simulation results.
         
@@ -164,57 +112,62 @@ class GeneRegulatoryNetwork:
         t : numpy.ndarray
             Time points
         y : numpy.ndarray
-            Gene expression trajectories
+            State trajectories
         title : str
             Plot title
         """
-        plt.figure(figsize=(10, 6))
+        plt.figure(figsize=(12, 8))
         
-        for i in range(self.n_genes):
-            plt.plot(t, y[i], label=f"Gene {i}")
-        
+        # Plot mRNA levels
+        plt.subplot(2, 1, 1)
+        for i in range(3):
+            plt.plot(t, y[i], label=f"mRNA {i+1}")
         plt.xlabel("Time")
-        plt.ylabel("Expression Level")
-        plt.title(title)
+        plt.ylabel("mRNA Concentration")
+        plt.title(f"{title} - mRNA Levels")
         plt.legend()
         plt.grid(True, alpha=0.3)
+        
+        # Plot protein levels
+        plt.subplot(2, 1, 2)
+        for i in range(3):
+            plt.plot(t, y[i+3], label=f"Protein {i+1}")
+        plt.xlabel("Time")
+        plt.ylabel("Protein Concentration")
+        plt.title(f"{title} - Protein Levels")
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        
+        plt.tight_layout()
         plt.show()
 
 
 # Example usage
 if __name__ == "__main__":
-    # Create a GRN with default parameters
-    grn = GeneRegulatoryNetwork()
+    # Create a repressilator with parameters known to produce oscillations
+    grn = GeneRegulatoryNetwork(alpha=216, alpha0=0.216, beta=5, n=2, K=40)
     
-    # Simulate the network
-    t, y = grn.simulate()
-    
-    # Plot the results
-    grn.plot_simulation(t, y)
-    
-    # Example with custom parameters
-    custom_interaction = np.array([
-        [0, 1.2, -0.3],
-        [-0.8, 0, 0.9],
-        [0.5, -0.4, 0]
-    ])
-    
-    custom_hill = np.ones((3, 3)) * 2.5
-    custom_thresholds = np.ones((3, 3)) * 0.3
-    custom_basal = np.array([0.05, 0.08, 0.12])
-    custom_degradation = np.array([0.1, 0.15, 0.2])
-    
-    custom_grn = GeneRegulatoryNetwork(
-        n_genes=3,
-        interaction_matrix=custom_interaction,
-        hill_coefficients=custom_hill,
-        activation_thresholds=custom_thresholds,
-        basal_rates=custom_basal,
-        degradation_rates=custom_degradation
+    # Simulate the network with lower initial conditions
+    initial_conditions = np.array([60, 0, 0, 0.5, 0.2, 0.8])
+    t, y = grn.simulate(
+        initial_conditions=initial_conditions,
+        t_span=(0, 200), 
+        t_points=2000
     )
     
-    # Simulate with custom parameters
-    t_custom, y_custom = custom_grn.simulate(t_span=(0, 200))
+    # Plot the results
+    grn.plot_simulation(t, y, "Repressilator")
     
-    # Plot custom simulation
-    custom_grn.plot_simulation(t_custom, y_custom, "Custom GRN Dynamics")
+    # Try a different parameter set with stronger oscillations
+    grn2 = GeneRegulatoryNetwork(alpha=300, alpha0=0.1, beta=5, n=4, K=20)
+    
+    # Simulate with different initial conditions
+    initial_conditions2 = np.array([60, 0, 0, 0.1, 0.3, 0.5])
+    t2, y2 = grn2.simulate(
+        initial_conditions=initial_conditions2,
+        t_span=(0, 200),
+        t_points=2000
+    )
+    
+    # Plot the second simulation
+    grn2.plot_simulation(t2, y2, "Repressilator with Stronger Oscillations")
